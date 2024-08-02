@@ -34,12 +34,14 @@ def create_parser():
     # --------------- Basic ---------------
     parser = argparse.ArgumentParser()
     
-    parser.add_argument('--backbone', default='phydnet',  type=str,                 help='backbone model for deterministic prediction')
-    parser.add_argument('--use_diff', action="store_true", default=False,        help='Weather use diff framework, as for ablation study')
+    parser.add_argument('--backbone', default='phydnet',  type=str,              help='backbone model for deterministic prediction')
+    parser.add_argument('--use_diff', action="store_true", default=True,        help='Weather use diff framework, as for ablation study')
     
     parser.add_argument("--seed",           type=int,   default=0,              help='Experiment seed')
     parser.add_argument("--exp_dir",        type=str,   default='basic_exps',   help="experiment directory")
     parser.add_argument("--exp_note",       type=str,   default=None,           help="additional note for experiment")
+
+    parser.add_argument("--debug",          type=bool,  default=True,           help="load a small dataset for debugging")
 
 
     # --------------- Dataset ---------------
@@ -195,9 +197,10 @@ class Runner(object):
         train_data, valid_data, test_data, color_save_fn, PIXEL_SCALE, THRESHOLDS = get_dataset(
             data_name=self.args.dataset,
             # data_path=self.args.data_path,
-            img_size=self.args.img_size,
-            seq_len=self.args.seq_len,
-            batch_size=self.args.batch_size,
+            img_size=self.args.img_size,#128
+            seq_len=self.args.seq_len,#25
+            batch_size=self.args.batch_size,#6
+            debug=self.args.debug
         )
         
         self.visiual_save_fn = color_save_fn

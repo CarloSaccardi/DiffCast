@@ -960,10 +960,13 @@ class SEVIRTorchDataset(TorchDataset):
                  output_type = np.float32,
                  preprocess: bool = True,
                  rescale_method: str = "01",
-                 verbose: bool = False):
+                 verbose: bool = False,
+                 debug: bool = False):
+        
         super(SEVIRTorchDataset, self).__init__()
         self.layout = layout
         self.img_size = img_size
+        self.debug = debug
         self.sevir_dataloader = SEVIRDataLoader(
             dataset_dir=dataset_dir,
             data_types=["vil", ],
@@ -1007,7 +1010,10 @@ class SEVIRTorchDataset(TorchDataset):
         return data
 
     def __len__(self):
-        return self.sevir_dataloader.__len__()
+        if self.debug:
+            return min(100, self.sevir_dataloader.__len__())
+        else:
+            return self.sevir_dataloader.__len__()
 
     def collate_fn(self, data_dict_list):
         r"""

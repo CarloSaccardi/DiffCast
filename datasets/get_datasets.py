@@ -101,10 +101,10 @@ DATAPATH = {
     'cikm' : 'path/to/dataset/cikm.h5',
     'shanghai' : 'path/to/dataset/shanghai.h5',
     'meteo' : 'path/to/dataset/meteo_radar.h5',
-    'sevir' : 'path/to/dataset/sevir'
+    'sevir' : 'sevir'
 }
 
-def get_dataset(data_name, img_size, seq_len, **kwargs):
+def get_dataset(data_name, img_size, seq_len, debug, **kwargs):
     dataset_name = data_name.lower()
     train = val = test = None
 
@@ -150,7 +150,8 @@ def get_dataset(data_name, img_size, seq_len, **kwargs):
             output_type=np.float32,
             preprocess=True,
             rescale_method='01',
-            verbose=False
+            verbose=False,
+            debug=debug
         )
         
         val = SEVIRTorchDataset(
@@ -169,7 +170,8 @@ def get_dataset(data_name, img_size, seq_len, **kwargs):
             output_type=np.float32,
             preprocess=True,
             rescale_method='01',
-            verbose=False
+            verbose=False,
+            debug=debug
         )
         
         test = SEVIRTorchDataset(
@@ -188,7 +190,8 @@ def get_dataset(data_name, img_size, seq_len, **kwargs):
             output_type=np.float32,
             preprocess=True,
             rescale_method='01',
-            verbose=False
+            verbose=False,
+            debug=debug
         )
         
 
