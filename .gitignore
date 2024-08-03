@@ -1,3 +1,4 @@
 #ignore all files in SEVIR directory
 sevir/*
 *.pyc
+Exps/*
