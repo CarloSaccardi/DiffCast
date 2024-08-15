@@ -14,6 +14,8 @@ import torch.nn.functional as F
 from einops import rearrange, reduce
 from einops.layers.torch import Rearrange
 
+from torch.profiler import profile, record_function, ProfilerActivity
+
 from tqdm.auto import tqdm
 
 
@@ -445,6 +447,7 @@ class ContextNet(nn.Module):
             if i == 5:
                 local_ctx = [h.clone() for h in globla_ctx]
         return globla_ctx, local_ctx
+    
         
         
 class Unet(nn.Module):
@@ -948,7 +951,7 @@ class GaussianDiffusion(nn.Module):
 
     def predict(self, frames_in,  compute_loss=False, frames_gt=None, **kwargs):
         T_out = default(kwargs.get('T_out'), 20)
-        pred, mu, y = self.sample(frames_in=frames_in, T_out=T_out)
+        #pred, mu, y = self.sample(frames_in=frames_in, T_out=T_out)
         if compute_loss:
             B, T_in, c, h, w = frames_in.shape
             device = self.device
@@ -991,38 +994,43 @@ class GaussianDiffusion(nn.Module):
             # return pred, mu, y, loss
             return pred, mu
 
-def p_losses(self, x_start, t, noise=None, offset_noise_strength=None, ctx=None, idx=None, cond=None):
-    b, _, c, h, w = x_start.shape
+    def p_losses(self, x_start, t, noise=None, offset_noise_strength=None, ctx=None, idx=None, cond=None):
+        b, _, c, h, w = x_start.shape
 
-    noise = default(noise, lambda: torch.randn_like(x_start))
+        noise = default(noise, lambda: torch.randn_like(x_start))
 
-    # offset noise - https://www.crosslabs.org/blog/diffusion-with-offset-noise
-    offset_noise_strength = default(offset_noise_strength, self.offset_noise_strength)
+        # offset noise - https://www.crosslabs.org/blog/diffusion-with-offset-noise
+        offset_noise_strength = default(offset_noise_strength, self.offset_noise_strength)
 
-    if offset_noise_strength > 0.:
-        offset_noise = torch.randn(x_start.shape[:2], device = self.device)
-        noise += offset_noise_strength * rearrange(offset_noise, 'b c -> b c 1 1')
+        if offset_noise_strength > 0.:
+            offset_noise = torch.randn(x_start.shape[:2], device = self.device)
+            noise += offset_noise_strength * rearrange(offset_noise, 'b c -> b c 1 1')
 
-    # noise sample
-    x = self.predict_v(x_start=x_start, t=t, noise=noise)
-    model_out = self.model(x, t, cond=cond, ctx=ctx, idx=idx)
+        # noise sample
+        x = self.predict_v(x_start=x_start, t=t, noise=noise)
 
-    if self.objective == 'pred_noise':
-        target = noise
-    elif self.objective == 'pred_x0':
-        target = x_start
-    elif self.objective == 'pred_v':
-        v = self.predict_v(x_start, t, noise)
-        target = v
-    else:
-        raise ValueError(f'unknown objective {self.objective}')
+        with profile(activities=[ProfilerActivity.CPU], record_shapes=True) as prof:
+            with record_function("model_inference"):
+                self.model(x, t, cond=cond, ctx=ctx, idx=idx)
 
-    loss = F.mse_loss(model_out, target, reduction = 'none')
-    loss = reduce(loss, 'b ... -> b', 'mean')
+        model_out = self.model(x, t, cond=cond, ctx=ctx, idx=idx)
 
-    loss = loss * extract(self.loss_weight, t, loss.shape)
-    return model_out, loss.mean()
-        
+        if self.objective == 'pred_noise':
+            target = noise
+        elif self.objective == 'pred_x0':
+            target = x_start
+        elif self.objective == 'pred_v':
+            v = self.predict_v(x_start, t, noise)
+            target = v
+        else:
+            raise ValueError(f'unknown objective {self.objective}')
+
+        loss = F.mse_loss(model_out, target, reduction = 'none')
+        loss = reduce(loss, 'b ... -> b', 'mean')
+
+        loss = loss * extract(self.loss_weight, t, loss.shape)
+        return model_out, loss.mean()
+
 
 
 

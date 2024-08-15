@@ -1011,7 +1011,7 @@ class SEVIRTorchDataset(TorchDataset):
 
     def __len__(self):
         if self.debug:
-            return min(100, self.sevir_dataloader.__len__())
+            return min(25, self.sevir_dataloader.__len__())
         else:
             return self.sevir_dataloader.__len__()
 

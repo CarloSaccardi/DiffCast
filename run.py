@@ -41,7 +41,8 @@ def create_parser():
     parser.add_argument("--exp_dir",        type=str,   default='basic_exps',   help="experiment directory")
     parser.add_argument("--exp_note",       type=str,   default=None,           help="additional note for experiment")
 
-    parser.add_argument("--debug",          type=bool,  default=True,           help="load a small dataset for debugging")
+    parser.add_argument("--debug",          type=bool,  default=False,           help="load a small dataset for debugging")
+    parser.add_argument("--profiler",       type=bool,  default=True,           help="use profiler to check the code")
 
 
     # --------------- Dataset ---------------
@@ -84,6 +85,9 @@ class Runner(object):
     def __init__(self, args):
         
         self.args = args
+        if self.args.debug:
+            self.args.batch_size = 1
+            
         self._preparation()
         
         # Config DDP kwargs from accelerate
@@ -361,7 +365,7 @@ class Runner(object):
         # =================================        
         device = self.accelerator.device
         
-        if '.pt' in milestone:
+        if '.pt' in str(milestone):
             data = torch.load(milestone, map_location=device)
         else:
             data = torch.load(osp.join(self.ckpt_path, f"ckpt-{milestone}.pt"), map_location=device)
@@ -389,6 +393,16 @@ class Runner(object):
             disable=not self.is_main,
         )
         start_epoch = self.cur_epoch
+
+        prof = torch.profiler.profile(
+                schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=1),
+                on_trace_ready=torch.profiler.tensorboard_trace_handler('./log/diffcast'),
+                record_shapes=True,
+                with_stack=True)
+        
+        if self.args.profiler:
+            prof.start()
+
         for epoch in range(start_epoch, self.global_epochs):
             self.cur_epoch = epoch
             self.model.train()
@@ -455,7 +469,11 @@ class Runner(object):
             self.save()
             print_log(f" ========= Finisth one Epoch ==========", self.is_main)
 
+
+        if self.args.profiler:
+            prof.stop()
         self.accelerator.end_training()
+
         
     def _get_seq_data(self, batch):
         # frame_seq = batch['vil'].unsqueeze(2).to(self.device)
@@ -553,4 +571,5 @@ if __name__ == '__main__':
     # pip install gprof2dot
     # gprof2dot -f pstats train.profile | dot -Tpng -o result.png
     # cProfile.run('main()', filename='train.profile', sort='cumulative')
-    main()
+
+    main() 
