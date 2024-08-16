@@ -26,7 +26,7 @@ from utils.metrics import Evaluator
 from utils.tools import print_log, cycle, show_img_info
 
 # Apply your own wandb api key to log online
-os.environ["WANDB_API_KEY"] = "YOUR_WANDB"
+os.environ["WANDB_API_KEY"] = "0a059993398bd69fd25f50e345c85317d0b97cc4"
 # os.environ["WANDB_SILENT"] = "true"
 os.environ["ACCELERATE_DEBUG_MODE"] = "1"
 
@@ -41,8 +41,8 @@ def create_parser():
     parser.add_argument("--exp_dir",        type=str,   default='basic_exps',   help="experiment directory")
     parser.add_argument("--exp_note",       type=str,   default=None,           help="additional note for experiment")
 
-    parser.add_argument("--debug",          type=bool,  default=False,           help="load a small dataset for debugging")
-    parser.add_argument("--profiler",       type=bool,  default=True,           help="use profiler to check the code")
+    parser.add_argument("--debug",          type=bool,  default=True,           help="load a small dataset for debugging")
+    parser.add_argument("--profiler",       type=bool,  default=False,           help="use profiler to check the code")
 
 
     # --------------- Dataset ---------------
@@ -394,15 +394,6 @@ class Runner(object):
         )
         start_epoch = self.cur_epoch
 
-        prof = torch.profiler.profile(
-                schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=1),
-                on_trace_ready=torch.profiler.tensorboard_trace_handler('./log/diffcast'),
-                record_shapes=True,
-                with_stack=True)
-        
-        if self.args.profiler:
-            prof.start()
-
         for epoch in range(start_epoch, self.global_epochs):
             self.cur_epoch = epoch
             self.model.train()
@@ -469,9 +460,6 @@ class Runner(object):
             self.save()
             print_log(f" ========= Finisth one Epoch ==========", self.is_main)
 
-
-        if self.args.profiler:
-            prof.stop()
         self.accelerator.end_training()
 
         
@@ -483,10 +471,10 @@ class Runner(object):
         radar_batch = self._get_seq_data(batch)
         frames_in, frames_out = radar_batch[:,:self.args.frames_in], radar_batch[:,self.args.frames_in:]
         assert radar_batch.shape[1] == self.args.frames_out + self.args.frames_in, "radar sequence length error"
-        _, loss = self.model.predict(frames_in=frames_in, frames_gt=frames_out, compute_loss=True)
+        _, loss, backbone_loss, diff_loss = self.model.predict(frames_in=frames_in, frames_gt=frames_out, compute_loss=True)
         if loss is None:
             raise ValueError("Loss is None, please check the model predict function")
-        return {'total_loss': loss}
+        return {'total_loss': loss, "backbone_loss": backbone_loss, "diff_loss": diff_loss}
         
     
     @torch.no_grad()

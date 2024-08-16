@@ -984,7 +984,7 @@ class GaussianDiffusion(nn.Module):
             loss = (1 - alpha) * backbone_loss + alpha * diff_loss / 3.
 
             #backbone_output = self.unnormalize(backbone_output)
-            return backbone_output, loss
+            return backbone_output, loss, backbone_loss, diff_loss
         else:
             pred, mu, y = self.sample(frames_in=frames_in, T_out=T_out)
             loss = None
