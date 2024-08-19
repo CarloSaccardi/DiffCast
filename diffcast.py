@@ -649,7 +649,7 @@ class GaussianDiffusion(nn.Module):
         *,
         timesteps = 1000,
         sampling_timesteps = None,
-        objective = 'pred_v',
+        objective = 'pred_x0',
         beta_schedule = 'sigmoid',
         schedule_fn_kwargs = dict(),
         ddim_sampling_eta = 0.,
@@ -1009,9 +1009,9 @@ class GaussianDiffusion(nn.Module):
         # noise sample
         x = self.predict_v(x_start=x_start, t=t, noise=noise)
 
-        with profile(activities=[ProfilerActivity.CPU], record_shapes=True) as prof:
-            with record_function("model_inference"):
-                self.model(x, t, cond=cond, ctx=ctx, idx=idx)
+        #with profile(activities=[ProfilerActivity.CPU], record_shapes=True) as prof:
+        #    with record_function("model_inference"):
+        self.model(x, t, cond=cond, ctx=ctx, idx=idx)
 
         model_out = self.model(x, t, cond=cond, ctx=ctx, idx=idx)
 
