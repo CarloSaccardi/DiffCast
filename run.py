@@ -1,5 +1,5 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+#os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 import os.path as osp
 import math
 import time
@@ -43,8 +43,8 @@ def create_parser():
     parser.add_argument("--exp_dir",        type=str,   default='basic_exps',   help="experiment directory")
     parser.add_argument("--exp_note",       type=str,   default=None,           help="additional note for experiment")
 
-    parser.add_argument("--debug",          type=bool,  default=False,          help="load a small dataset for debugging")
-    parser.add_argument("--profiler",       type=bool,  default=True,           help="use profiler to check the code")
+    parser.add_argument("--debug",          type=bool,  default=True,          help="load a small dataset for debugging")
+    parser.add_argument("--profiler",       type=bool,  default=False,           help="use profiler to check the code")
 
 
     # --------------- Dataset ---------------
@@ -76,8 +76,8 @@ def create_parser():
     
     # --------------- Additional Ablation Configs ---------------
     parser.add_argument("--eval",           action="store_true",                                     help="evaluation mode")
-    parser.add_argument("--wandb_state",    type=str,   default='online',                            help="wandb state config")
-    parser.add_argument("--profiler_path",  type=str,   default="./log/diffcast_profiler",           help="data path")
+    parser.add_argument("--wandb_state",    type=str,   default='disabled',                            help="wandb state config")
+    parser.add_argument("--profiler_path",  type=str,   default="./log/diffcast_prof",           help="data path")
 
     args = parser.parse_args()
     return args
@@ -144,8 +144,10 @@ class Runner(object):
             next(self.train_dl_cycle)
             print_log(f"Data Loading Time: {time.time() - start}", self.is_main)
             # print_log(show_img_info(sample), self.is_main)
+
             
         print_log(f"gpu_nums: {torch.cuda.device_count()}, gpu_id: {torch.cuda.current_device()}")
+
         
         if self.args.ckpt_milestone is not None:
             self.load(self.args.ckpt_milestone)
@@ -398,12 +400,12 @@ class Runner(object):
         start_epoch = self.cur_epoch\
         
         with torch.profiler.profile(
-                                    schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=1),
-                                    on_trace_ready=torch.profiler.tensorboard_trace_handler(self.args.profiler_path),
-                                    record_shapes=True,
-                                    with_stack=True
-                                    ) as prof:
-
+                        schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=1),
+                        on_trace_ready=torch.profiler.tensorboard_trace_handler("./log/prof"),
+                        record_shapes=True,
+                        profile_memory=True,
+                        with_stack=True
+                        ) as prof:
 
             for epoch in range(start_epoch, self.global_epochs):
                 self.cur_epoch = epoch
