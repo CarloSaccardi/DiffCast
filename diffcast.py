@@ -653,7 +653,7 @@ class GaussianDiffusion(nn.Module):
         beta_schedule = 'sigmoid',
         schedule_fn_kwargs = dict(),
         ddim_sampling_eta = 0.,
-        auto_normalize = True,
+        auto_normalize = False,
         offset_noise_strength = 0.,  # https://www.crosslabs.org/blog/diffusion-with-offset-noise
         min_snr_loss_weight = False, # https://arxiv.org/abs/2303.09556
         min_snr_gamma = 5
@@ -954,10 +954,14 @@ class GaussianDiffusion(nn.Module):
         #pred, mu, y = self.sample(frames_in=frames_in, T_out=T_out)
         if compute_loss:
             B, T_in, c, h, w = frames_in.shape
-            device = self.device
+            T_out = frames_gt.shape[1]
+            device = frames_in.device
 
-            backbone_output, backbone_loss = self.backbone_net.predict(frames_in, frames_gt=frames_gt,
-                                                                    compute_loss=compute_loss, **kwargs)
+            backbone_output, backbone_loss = self.backbone_net.predict(frames_in, frames_gt=frames_gt, compute_loss=compute_loss)
+
+            frames_in = self.normalize(frames_in)
+            backbone_output = self.normalize(backbone_output)
+            frames_gt = self.normalize(frames_gt)
 
             residual = frames_gt - backbone_output
             global_ctx, local_ctx = self.ctx_net.scan_ctx(torch.cat((frames_in, backbone_output), dim=1))
@@ -973,26 +977,26 @@ class GaussianDiffusion(nn.Module):
 
                 cond = pre_frag - pre_mu if pre_mu is not None else torch.zeros_like(pre_frag)
                 res_pred, noise_loss = self.p_losses(res, t, cond=cond, ctx=global_ctx if frag_idx > 0 else local_ctx,
-                                                    idx=torch.full((B,), frag_idx, device=device, dtype=torch.long))
+                                                        idx=torch.full((B,), frag_idx, device=device, dtype=torch.long))
                 diff_loss += noise_loss
 
-                frag_pred = res_pred + mu
-                pre_frag = frag_pred
+                pre_frag = frames_gt[:, frag_idx * T_in : (frag_idx + 1) * T_in]
                 pre_mu = mu
+            diff_loss /= (T_out // T_in)
 
             alpha = torch.tensor(0.5)
-            loss = (1 - alpha) * backbone_loss + alpha * diff_loss / 3.
+            loss = (1 - alpha) * backbone_loss + alpha * diff_loss
+            return loss, backbone_loss, diff_loss
 
-            #backbone_output = self.unnormalize(backbone_output)
-            return backbone_output, loss, backbone_loss, diff_loss
-        else:
-            pred, mu, y = self.sample(frames_in=frames_in, T_out=T_out)
-            loss = None
-            backbone_loss = None
-            diff_loss = None
+    # Reference: https://github.com/lucidrains/denoising-diffusion-pytorch/blob/main/denoising_diffusion_pytorch/denoising_diffusion_pytorch.py#L763
+    @autocast(enabled = False)
+    def q_sample(self, x_start, t, noise = None):
+        noise = default(noise, lambda: torch.randn_like(x_start))
 
-            # return pred, mu, y, loss
-            return pred, mu
+        return (
+            extract(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start +
+            extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise
+        )
 
     def p_losses(self, x_start, t, noise=None, offset_noise_strength=None, ctx=None, idx=None, cond=None):
         b, _, c, h, w = x_start.shape
@@ -1007,11 +1011,7 @@ class GaussianDiffusion(nn.Module):
             noise += offset_noise_strength * rearrange(offset_noise, 'b c -> b c 1 1')
 
         # noise sample
-        x = self.predict_v(x_start=x_start, t=t, noise=noise)
-
-        with profile(activities=[ProfilerActivity.CPU], record_shapes=True) as prof:
-            with record_function("model_inference"):
-                self.model(x, t, cond=cond, ctx=ctx, idx=idx)
+        x = self.q_sample(x_start=x_start, t=t, noise=noise) # Use q_sample here for updating
 
         model_out = self.model(x, t, cond=cond, ctx=ctx, idx=idx)
 
@@ -1030,7 +1030,6 @@ class GaussianDiffusion(nn.Module):
 
         loss = loss * extract(self.loss_weight, t, loss.shape)
         return model_out, loss.mean()
-
 
 
 

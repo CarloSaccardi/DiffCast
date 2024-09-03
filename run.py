@@ -1,5 +1,4 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 import os.path as osp
 import math
 import time
@@ -41,7 +40,7 @@ def create_parser():
     parser.add_argument("--exp_dir",        type=str,   default='basic_exps',   help="experiment directory")
     parser.add_argument("--exp_note",       type=str,   default=None,           help="additional note for experiment")
 
-    parser.add_argument("--debug",          type=bool,  default=True,           help="load a small dataset for debugging")
+    parser.add_argument("--debug",          type=bool,  default=False,           help="load a small dataset for debugging")
     parser.add_argument("--profiler",       type=bool,  default=False,           help="use profiler to check the code")
 
 
@@ -471,7 +470,7 @@ class Runner(object):
         radar_batch = self._get_seq_data(batch)
         frames_in, frames_out = radar_batch[:,:self.args.frames_in], radar_batch[:,self.args.frames_in:]
         assert radar_batch.shape[1] == self.args.frames_out + self.args.frames_in, "radar sequence length error"
-        _, loss, backbone_loss, diff_loss = self.model.predict(frames_in=frames_in, frames_gt=frames_out, compute_loss=True)
+        loss, backbone_loss, diff_loss = self.model.predict(frames_in=frames_in, frames_gt=frames_out, compute_loss=True)
         if loss is None:
             raise ValueError("Loss is None, please check the model predict function")
         return {'total_loss': loss, "backbone_loss": backbone_loss, "diff_loss": diff_loss}

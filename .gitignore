@@ -2,3 +2,6 @@
 sevir/*
 *.pyc
 Exps/*
+wandb/*
+*.log
+log/*
