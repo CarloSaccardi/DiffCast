@@ -40,7 +40,7 @@ def create_parser():
     parser.add_argument("--exp_dir",        type=str,   default='basic_exps',   help="experiment directory")
     parser.add_argument("--exp_note",       type=str,   default=None,           help="additional note for experiment")
 
-    parser.add_argument("--debug",          type=bool,  default=False,           help="load a small dataset for debugging")
+    parser.add_argument("--debug",          type=bool,  default=True,           help="load a small dataset for debugging")
     parser.add_argument("--profiler",       type=bool,  default=False,           help="use profiler to check the code")
 
 
@@ -286,7 +286,7 @@ class Runner(object):
         # Calcutate training nums and config optimizer and learning schedule
         # =================================
         num_steps_per_epoch = len(self.train_loader)
-        num_epoch = math.ceil(self.args.training_steps / num_steps_per_epoch)
+        num_epoch = math.ceil(self.args.training_steps / num_steps_per_epoch) if not self.args.debug else -math.inf #num_epoch gets equal to 80000 when debugging because of the small dataset considered
         
         self.global_epochs = max(num_epoch, self.args.epochs)
         self.global_steps = self.global_epochs * num_steps_per_epoch
@@ -398,6 +398,10 @@ class Runner(object):
             self.model.train()
             
             for i, batch in enumerate(self.train_loader):
+
+                if i >= 1 + 1 + 3:
+                    break
+
                 # train the model with mixed_precision
                 with self.accelerator.autocast(self.model):
 
