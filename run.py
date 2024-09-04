@@ -43,8 +43,8 @@ def create_parser():
     parser.add_argument("--exp_dir",        type=str,   default='basic_exps',   help="experiment directory")
     parser.add_argument("--exp_note",       type=str,   default=None,           help="additional note for experiment")
 
-    parser.add_argument("--debug",          type=bool,  default=True,          help="load a small dataset for debugging")
-    parser.add_argument("--profiler",       type=bool,  default=False,           help="use profiler to check the code")
+    parser.add_argument("--debug",          type=bool,  default=False,          help="load a small dataset for debugging")
+    parser.add_argument("--profiler",       type=bool,  default=True,           help="use profiler to check the code")
 
 
     # --------------- Dataset ---------------
@@ -401,7 +401,7 @@ class Runner(object):
         
         with torch.profiler.profile(
                         schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=1),
-                        on_trace_ready=torch.profiler.tensorboard_trace_handler("./log/prof"),
+                        on_trace_ready=torch.profiler.tensorboard_trace_handler("./log/diocane"),
                         record_shapes=True,
                         profile_memory=True,
                         with_stack=True
@@ -418,7 +418,7 @@ class Runner(object):
 
                         ##### PROFILER #####
                         prof.step()
-                        if i >= (1 + 1 + 3) * 2 and self.args.profiler:
+                        if i >= (1 + 1 + 3) * 2:
                             break
                         ###################
 
