@@ -1,5 +1,5 @@
 #!/bin/bash
 
-export CUDA_VISIBLE_DEVICES=5
+export CUDA_VISIBLE_DEVICES=4
 
 python run.py 

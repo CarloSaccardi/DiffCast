@@ -40,7 +40,7 @@ def create_parser():
     parser.add_argument("--exp_dir",        type=str,   default='basic_exps',   help="experiment directory")
     parser.add_argument("--exp_note",       type=str,   default=None,           help="additional note for experiment")
 
-    parser.add_argument("--debug",          type=bool,  default=True,           help="load a small dataset for debugging")
+    parser.add_argument("--debug",          type=bool,  default=False,           help="load a small dataset for debugging")
     parser.add_argument("--profiler",       type=bool,  default=False,           help="use profiler to check the code")
 
 
