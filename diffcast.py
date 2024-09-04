@@ -966,27 +966,47 @@ class GaussianDiffusion(nn.Module):
             residual = frames_gt - backbone_output
             global_ctx, local_ctx = self.ctx_net.scan_ctx(torch.cat((frames_in, backbone_output), dim=1))
 
-            pre_frag = frames_in
-            pre_mu = None
-            pred_ress = []
-            diff_loss = 0.
-            t = torch.randint(0, self.num_timesteps, (B,), device=self.device).long()
-            for frag_idx in range(T_out // T_in):
-                mu = backbone_output[:, frag_idx * T_in : (frag_idx + 1) * T_in]
-                res = residual[:, frag_idx * T_in : (frag_idx + 1) * T_in]
+            with torch.profiler.profile(
+                schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=1),
+                activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
+                on_trace_ready=torch.profiler.tensorboard_trace_handler('./log/diffusion'),
+                record_shapes=True,
+                profile_memory=True,
+                with_stack=True
+            ) as prof:
 
-                cond = pre_frag - pre_mu if pre_mu is not None else torch.zeros_like(pre_frag)
-                res_pred, noise_loss = self.p_losses(res, t, cond=cond, ctx=global_ctx if frag_idx > 0 else local_ctx,
-                                                        idx=torch.full((B,), frag_idx, device=device, dtype=torch.long))
-                diff_loss += noise_loss
 
-                pre_frag = frames_gt[:, frag_idx * T_in : (frag_idx + 1) * T_in]
-                pre_mu = mu
-            diff_loss /= (T_out // T_in)
+                pre_frag = frames_in
+                pre_mu = None
+                pred_ress = []
+                diff_loss = 0.
+                t = torch.randint(0, self.num_timesteps, (B,), device=self.device).long()
+                for frag_idx in range(T_out // T_in):
+                    mu = backbone_output[:, frag_idx * T_in : (frag_idx + 1) * T_in]
+                    res = residual[:, frag_idx * T_in : (frag_idx + 1) * T_in]
 
-            alpha = torch.tensor(0.5)
-            loss = (1 - alpha) * backbone_loss + alpha * diff_loss
-            return loss, backbone_loss, diff_loss
+                    cond = pre_frag - pre_mu if pre_mu is not None else torch.zeros_like(pre_frag)
+                    res_pred, noise_loss = self.p_losses(res, t, cond=cond, ctx=global_ctx if frag_idx > 0 else local_ctx,
+                                                            idx=torch.full((B,), frag_idx, device=device, dtype=torch.long))
+                    diff_loss += noise_loss
+
+                    pre_frag = frames_gt[:, frag_idx * T_in : (frag_idx + 1) * T_in]
+                    pre_mu = mu
+                diff_loss /= (T_out // T_in)
+
+                alpha = torch.tensor(0.5)
+                loss = (1 - alpha) * backbone_loss + alpha * diff_loss
+                prof.step()
+                return loss, backbone_loss, diff_loss
+            
+        else:
+            pred, mu, y = self.sample(frames_in=frames_in, T_out=T_out)
+            loss = None
+            backbone_loss = None
+            diff_loss = None
+
+            # return pred, mu, y, loss
+            return pred, mu
 
     # Reference: https://github.com/lucidrains/denoising-diffusion-pytorch/blob/main/denoising_diffusion_pytorch/denoising_diffusion_pytorch.py#L763
     @autocast(enabled = False)
