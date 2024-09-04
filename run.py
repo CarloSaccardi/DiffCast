@@ -286,7 +286,7 @@ class Runner(object):
         # Calcutate training nums and config optimizer and learning schedule
         # =================================
         num_steps_per_epoch = len(self.train_loader)
-        num_epoch = math.ceil(self.args.training_steps / num_steps_per_epoch)
+        num_epoch = math.ceil(self.args.training_steps / num_steps_per_epoch) if not self.args.debug else -math.inf #num_epoch gets equal to 80000 when debugging because of the small dataset considered
         
         self.global_epochs = max(num_epoch, self.args.epochs)
         self.global_steps = self.global_epochs * num_steps_per_epoch

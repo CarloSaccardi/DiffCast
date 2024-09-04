@@ -987,6 +987,14 @@ class GaussianDiffusion(nn.Module):
             alpha = torch.tensor(0.5)
             loss = (1 - alpha) * backbone_loss + alpha * diff_loss
             return loss, backbone_loss, diff_loss
+        else:
+            pred, mu, y = self.sample(frames_in=frames_in, T_out=T_out)
+            loss = None
+            backbone_loss = None
+            diff_loss = None
+
+            # return pred, mu, y, loss
+            return pred, mu
 
     # Reference: https://github.com/lucidrains/denoising-diffusion-pytorch/blob/main/denoising_diffusion_pytorch/denoising_diffusion_pytorch.py#L763
     @autocast(enabled = False)
