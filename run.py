@@ -41,7 +41,7 @@ def create_parser():
     parser.add_argument("--exp_note",       type=str,   default=None,           help="additional note for experiment")
 
     parser.add_argument("--debug",          type=bool,  default=False,           help="load a small dataset for debugging")
-    parser.add_argument("--profiler",       type=bool,  default=False,           help="use profiler to check the code")
+    parser.add_argument("--profiler",       type=bool,  default=True,           help="use profiler to check the code")
 
 
     # --------------- Dataset ---------------
@@ -65,8 +65,8 @@ def create_parser():
     parser.add_argument("--grad_acc_step",  type=int,   default=1,               help="gradient accumulation step")
     
     # --------------- Training ---------------
-    parser.add_argument("--batch_size",     type=int,   default=6,              help="batch size")
-    parser.add_argument("--epochs",         type=int,   default=20,              help="number of epochs")
+    parser.add_argument("--batch_size",     type=int,   default=8,              help="batch size")
+    parser.add_argument("--epochs",         type=int,   default=2,              help="number of epochs")
     parser.add_argument("--training_steps", type=int,   default=200000,          help="number of training steps")
     parser.add_argument("--early_stop",     type=int,   default=10,              help="early stopping steps")
     parser.add_argument("--ckpt_milestone", type=str,   default=None,            help="resumed checkpoint milestone")
@@ -286,9 +286,8 @@ class Runner(object):
         # Calcutate training nums and config optimizer and learning schedule
         # =================================
         num_steps_per_epoch = len(self.train_loader)
-        num_epoch = math.ceil(self.args.training_steps / num_steps_per_epoch) if not self.args.debug else -math.inf #num_epoch gets equal to 80000 when debugging because of the small dataset considered
         
-        self.global_epochs = max(num_epoch, self.args.epochs)
+        self.global_epochs = self.args.epochs
         self.global_steps = self.global_epochs * num_steps_per_epoch
         self.steps_per_epoch = num_steps_per_epoch
         
@@ -393,75 +392,87 @@ class Runner(object):
         )
         start_epoch = self.cur_epoch
 
-        for epoch in range(start_epoch, self.global_epochs):
-            self.cur_epoch = epoch
-            self.model.train()
-            
-            for i, batch in enumerate(self.train_loader):
+        with torch.profiler.profile(
+                                    schedule=torch.profiler.schedule(wait=1, warmup=4, active=3, repeat=1),
+                                    activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
+                                    on_trace_ready=torch.profiler.tensorboard_trace_handler('./log/diffusion1'),
+                                    record_shapes=True,
+                                    profile_memory=True,
+                                    with_stack=True
+                                ) as prof:
 
-                if i >= 1 + 1 + 3:
-                    break
+            for epoch in range(start_epoch, self.global_epochs):
+                self.cur_epoch = epoch
+                self.model.train()
+                
+                for i, batch in enumerate(self.train_loader):
 
-                # train the model with mixed_precision
-                with self.accelerator.autocast(self.model):
+                    if i >= (1 + 4 + 3)*1:
+                        break
 
-                    loss_dict = self._train_batch(batch)
-                    self.accelerator.backward(loss_dict['total_loss'])
+                    # train the model with mixed_precision
+                    with self.accelerator.autocast(self.model):
+
+                        loss_dict = self._train_batch(batch)
+                        self.accelerator.backward(loss_dict['total_loss'])
+                        prof.step()
+                        
+                        if self.cur_step == 0:
+                            # training process check
+                            for name, param in self.model.named_parameters():
+                                if param.grad is None:
+                                    print_log(name, self.is_main)   
+        
+                    self.accelerator.wait_for_everyone()
+                    if self.accelerator.sync_gradients:
+                        self.accelerator.clip_grad_norm_(self.model.parameters(), 1.0)
                     
-                    if self.cur_step == 0:
-                        # training process check
-                        for name, param in self.model.named_parameters():
-                            if param.grad is None:
-                                print_log(name, self.is_main)   
-    
-                self.accelerator.wait_for_everyone()
-                if self.accelerator.sync_gradients:
-                    self.accelerator.clip_grad_norm_(self.model.parameters(), 1.0)
-                
-                self.optimizer.step()
-                self.optimizer.zero_grad()
-                
-                if not self.accelerator.optimizer_step_was_skipped:
-                    self.scheduler.step()
-                
-                # record train info
-                lr = self.optimizer.param_groups[0]['lr']
-                log_dict = dict()
-                log_dict['lr'] = lr
-                for k,v in loss_dict.items():
-                    log_dict[k] = v.item()
-                self.accelerator.log(log_dict, step=self.cur_step)
-                pbar.set_postfix(**log_dict)   
-                state_str = f"Epoch {self.cur_epoch}/{self.global_epochs}, Step {i}/{self.steps_per_epoch}"
-                pbar.set_description(state_str)
-                
-                # update ema param and log file every 20 steps
-                if i % 20 == 0:
-                    logging.info(state_str+'::'+str(log_dict))
-                self.ema.update()
+                    self.optimizer.step()
+                    self.optimizer.zero_grad()
+                    
+                    if not self.accelerator.optimizer_step_was_skipped:
+                        self.scheduler.step()
+                    
+                    # record train info
+                    lr = self.optimizer.param_groups[0]['lr']
+                    log_dict = dict()
+                    log_dict['lr'] = lr
+                    for k,v in loss_dict.items():
+                        log_dict[k] = v.item()
+                    self.accelerator.log(log_dict, step=self.cur_step)
+                    pbar.set_postfix(**log_dict)   
+                    state_str = f"Epoch {self.cur_epoch}/{self.global_epochs}, Step {i}/{self.steps_per_epoch}"
+                    pbar.set_description(state_str)
+                    
+                    # update ema param and log file every 20 steps
+                    if i % 20 == 0:
+                        logging.info(state_str+'::'+str(log_dict))
+                    self.ema.update()
 
-                self.cur_step += 1
-                pbar.update(1)
+                    self.cur_step += 1
+                    pbar.update(1)
+                    
+                    # do santy check at begining
+                    if self.cur_step == 1:
+                        """ santy check """
+                        if not osp.exists(self.sanity_path):
+                            try:
+                                print_log(f" ========= Running Sanity Check ==========", self.is_main)
+                                radar_ori, radar_recon= self._sample_batch(batch)
+                                os.makedirs(self.sanity_path)
+                                if self.is_main:
+                                    for i in range(radar_ori.shape[0]):
+                                        self.visiual_save_fn(radar_recon[i], radar_ori[i], osp.join(self.sanity_path, f"{i}/vil"),data_type='vil')
+
+                            except Exception as e:
+                                print_log(e, self.is_main)
+                                print_log("Sanity Check Failed", self.is_main)
+
+                # save checkpoint and do test every epoch
+                self.save()
+                print_log(f" ========= Finisth one Epoch ==========", self.is_main)
+
                 
-                # do santy check at begining
-                if self.cur_step == 1:
-                    """ santy check """
-                    if not osp.exists(self.sanity_path):
-                        try:
-                            print_log(f" ========= Running Sanity Check ==========", self.is_main)
-                            radar_ori, radar_recon= self._sample_batch(batch)
-                            os.makedirs(self.sanity_path)
-                            if self.is_main:
-                                for i in range(radar_ori.shape[0]):
-                                    self.visiual_save_fn(radar_recon[i], radar_ori[i], osp.join(self.sanity_path, f"{i}/vil"),data_type='vil')
-
-                        except Exception as e:
-                            print_log(e, self.is_main)
-                            print_log("Sanity Check Failed", self.is_main)
-
-            # save checkpoint and do test every epoch
-            self.save()
-            print_log(f" ========= Finisth one Epoch ==========", self.is_main)
 
         self.accelerator.end_training()
 
