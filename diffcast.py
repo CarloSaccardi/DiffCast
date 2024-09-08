@@ -950,14 +950,17 @@ class GaussianDiffusion(nn.Module):
     
 
     def predict(self, frames_in,  compute_loss=False, frames_gt=None, **kwargs):
+        
         T_out = default(kwargs.get('T_out'), 20)
         #pred, mu, y = self.sample(frames_in=frames_in, T_out=T_out)
         if compute_loss:
             B, T_in, c, h, w = frames_in.shape
             T_out = frames_gt.shape[1]
             device = frames_in.device
-
-            backbone_output, backbone_loss = self.backbone_net.predict(frames_in, frames_gt=frames_gt, compute_loss=compute_loss)
+            
+            with record_function("Deterministic"):
+                backbone_output, backbone_loss = self.backbone_net.predict(frames_in, frames_gt=frames_gt, compute_loss=compute_loss)
+            
 
             frames_in = self.normalize(frames_in)
             backbone_output = self.normalize(backbone_output)
@@ -972,22 +975,24 @@ class GaussianDiffusion(nn.Module):
             pred_ress = []
             diff_loss = 0.
             t = torch.randint(0, self.num_timesteps, (B,), device=self.device).long()
-            for frag_idx in range(T_out // T_in):
-                mu = backbone_output[:, frag_idx * T_in : (frag_idx + 1) * T_in]
-                res = residual[:, frag_idx * T_in : (frag_idx + 1) * T_in]
+            
+            with record_function("Diffusion"):
+                for frag_idx in range(T_out // T_in):
+                    mu = backbone_output[:, frag_idx * T_in : (frag_idx + 1) * T_in]
+                    res = residual[:, frag_idx * T_in : (frag_idx + 1) * T_in]
 
-                cond = pre_frag - pre_mu if pre_mu is not None else torch.zeros_like(pre_frag)
-                res_pred, noise_loss = self.p_losses(res, t, cond=cond, ctx=global_ctx if frag_idx > 0 else local_ctx,
-                                                        idx=torch.full((B,), frag_idx, device=device, dtype=torch.long))
-                diff_loss += noise_loss
+                    cond = pre_frag - pre_mu if pre_mu is not None else torch.zeros_like(pre_frag)
+                    res_pred, noise_loss = self.p_losses(res, t, cond=cond, ctx=global_ctx if frag_idx > 0 else local_ctx,
+                                                            idx=torch.full((B,), frag_idx, device=device, dtype=torch.long))
+                    diff_loss += noise_loss
 
-                pre_frag = frames_gt[:, frag_idx * T_in : (frag_idx + 1) * T_in]
-                pre_mu = mu
-            diff_loss /= (T_out // T_in)
+                    pre_frag = frames_gt[:, frag_idx * T_in : (frag_idx + 1) * T_in]
+                    pre_mu = mu
+                diff_loss /= (T_out // T_in)
 
-            alpha = torch.tensor(0.5)
-            loss = (1 - alpha) * backbone_loss + alpha * diff_loss
-            return loss, backbone_loss, diff_loss
+                alpha = torch.tensor(0.5)
+                loss = (1 - alpha) * backbone_loss + alpha * diff_loss
+                return loss, backbone_loss, diff_loss
             
         else:
             pred, mu, y = self.sample(frames_in=frames_in, T_out=T_out)
@@ -1021,9 +1026,11 @@ class GaussianDiffusion(nn.Module):
             noise += offset_noise_strength * rearrange(offset_noise, 'b c -> b c 1 1')
 
         # noise sample
-        x = self.q_sample(x_start=x_start, t=t, noise=noise) # Use q_sample here for updating
-
-        model_out = self.model(x, t, cond=cond, ctx=ctx, idx=idx)
+        with record_function("Forward Diffusion"):
+            x = self.q_sample(x_start=x_start, t=t, noise=noise) # Use q_sample here for updating
+        
+        with record_function("Backward Diffusion"):
+            model_out = self.model(x, t, cond=cond, ctx=ctx, idx=idx)
 
         if self.objective == 'pred_noise':
             target = noise

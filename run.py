@@ -392,85 +392,88 @@ class Runner(object):
         )
         start_epoch = self.cur_epoch
 
-        with torch.profiler.profile(
+        prof = torch.profiler.profile(
                                     schedule=torch.profiler.schedule(wait=1, warmup=4, active=3, repeat=1),
                                     activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
-                                    on_trace_ready=torch.profiler.tensorboard_trace_handler('./log/diffusion1'),
+                                    on_trace_ready=torch.profiler.tensorboard_trace_handler('./log/profile'),
                                     record_shapes=True,
                                     profile_memory=True,
                                     with_stack=True
-                                ) as prof:
-
-            for epoch in range(start_epoch, self.global_epochs):
-                self.cur_epoch = epoch
-                self.model.train()
-                
-                for i, batch in enumerate(self.train_loader):
-
-                    if i >= (1 + 4 + 3)*1:
-                        break
-
-                    # train the model with mixed_precision
-                    with self.accelerator.autocast(self.model):
-
-                        loss_dict = self._train_batch(batch)
-                        self.accelerator.backward(loss_dict['total_loss'])
-                        prof.step()
-                        
-                        if self.cur_step == 0:
-                            # training process check
-                            for name, param in self.model.named_parameters():
-                                if param.grad is None:
-                                    print_log(name, self.is_main)   
+                                ) 
         
-                    self.accelerator.wait_for_everyone()
-                    if self.accelerator.sync_gradients:
-                        self.accelerator.clip_grad_norm_(self.model.parameters(), 1.0)
-                    
-                    self.optimizer.step()
-                    self.optimizer.zero_grad()
-                    
-                    if not self.accelerator.optimizer_step_was_skipped:
-                        self.scheduler.step()
-                    
-                    # record train info
-                    lr = self.optimizer.param_groups[0]['lr']
-                    log_dict = dict()
-                    log_dict['lr'] = lr
-                    for k,v in loss_dict.items():
-                        log_dict[k] = v.item()
-                    self.accelerator.log(log_dict, step=self.cur_step)
-                    pbar.set_postfix(**log_dict)   
-                    state_str = f"Epoch {self.cur_epoch}/{self.global_epochs}, Step {i}/{self.steps_per_epoch}"
-                    pbar.set_description(state_str)
-                    
-                    # update ema param and log file every 20 steps
-                    if i % 20 == 0:
-                        logging.info(state_str+'::'+str(log_dict))
-                    self.ema.update()
+        for epoch in range(start_epoch, self.global_epochs):
+            self.cur_epoch = epoch
+            self.model.train()
+            
+            for i, batch in enumerate(self.train_loader):
 
-                    self.cur_step += 1
-                    pbar.update(1)
+                if i >= (1 + 4 + 3)*1:
+                    break
+
+                # train the model with mixed_precision
+                with self.accelerator.autocast(self.model):
+
+                    loss_dict = self._train_batch(batch, prof)
                     
-                    # do santy check at begining
-                    if self.cur_step == 1:
-                        """ santy check """
-                        if not osp.exists(self.sanity_path):
-                            try:
-                                print_log(f" ========= Running Sanity Check ==========", self.is_main)
-                                radar_ori, radar_recon= self._sample_batch(batch)
-                                os.makedirs(self.sanity_path)
-                                if self.is_main:
-                                    for i in range(radar_ori.shape[0]):
-                                        self.visiual_save_fn(radar_recon[i], radar_ori[i], osp.join(self.sanity_path, f"{i}/vil"),data_type='vil')
+                    with torch.profiler.record_function("Backward"):
+                        self.accelerator.backward(loss_dict['total_loss'])
+                        
+                    prof.step()
+                    
+                    if self.cur_step == 0:
+                        # training process check
+                        for name, param in self.model.named_parameters():
+                            if param.grad is None:
+                                print_log(name, self.is_main)   
+    
+                self.accelerator.wait_for_everyone()
+                if self.accelerator.sync_gradients:
+                    self.accelerator.clip_grad_norm_(self.model.parameters(), 1.0)
+                
+                self.optimizer.step()
+                self.optimizer.zero_grad()
+                
+                if not self.accelerator.optimizer_step_was_skipped:
+                    self.scheduler.step()
+                
+                # record train info
+                lr = self.optimizer.param_groups[0]['lr']
+                log_dict = dict()
+                log_dict['lr'] = lr
+                for k,v in loss_dict.items():
+                    log_dict[k] = v.item()
+                self.accelerator.log(log_dict, step=self.cur_step)
+                pbar.set_postfix(**log_dict)   
+                state_str = f"Epoch {self.cur_epoch}/{self.global_epochs}, Step {i}/{self.steps_per_epoch}"
+                pbar.set_description(state_str)
+                
+                # update ema param and log file every 20 steps
+                if i % 20 == 0:
+                    logging.info(state_str+'::'+str(log_dict))
+                self.ema.update()
 
-                            except Exception as e:
-                                print_log(e, self.is_main)
-                                print_log("Sanity Check Failed", self.is_main)
+                self.cur_step += 1
+                pbar.update(1)
+                
+                # do santy check at begining
+                if self.cur_step == 1:
+                    """ santy check """
+                    if not osp.exists(self.sanity_path):
+                        try:
+                            print_log(f" ========= Running Sanity Check ==========", self.is_main)
+                            radar_ori, radar_recon= self._sample_batch(batch)
+                            os.makedirs(self.sanity_path)
+                            if self.is_main:
+                                for i in range(radar_ori.shape[0]):
+                                    self.visiual_save_fn(radar_recon[i], radar_ori[i], osp.join(self.sanity_path, f"{i}/vil"),data_type='vil')
 
-                # save checkpoint and do test every epoch
-                self.save()
-                print_log(f" ========= Finisth one Epoch ==========", self.is_main)
+                        except Exception as e:
+                            print_log(e, self.is_main)
+                            print_log("Sanity Check Failed", self.is_main)
+
+            # save checkpoint and do test every epoch
+            self.save()
+            print_log(f" ========= Finisth one Epoch ==========", self.is_main)
 
                 
 
@@ -481,11 +484,11 @@ class Runner(object):
         # frame_seq = batch['vil'].unsqueeze(2).to(self.device)
         return batch      # [B, T, C, H, W]
     
-    def _train_batch(self, batch):
+    def _train_batch(self, batch, prof):
         radar_batch = self._get_seq_data(batch)
         frames_in, frames_out = radar_batch[:,:self.args.frames_in], radar_batch[:,self.args.frames_in:]
         assert radar_batch.shape[1] == self.args.frames_out + self.args.frames_in, "radar sequence length error"
-        loss, backbone_loss, diff_loss = self.model.predict(frames_in=frames_in, frames_gt=frames_out, compute_loss=True)
+        loss, backbone_loss, diff_loss = self.model.predict(frames_in=frames_in, frames_gt=frames_out, compute_loss=True, prof=prof)
         if loss is None:
             raise ValueError("Loss is None, please check the model predict function")
         return {'total_loss': loss, "backbone_loss": backbone_loss, "diff_loss": diff_loss}
