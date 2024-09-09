@@ -489,7 +489,8 @@ class PhyDNet_Model(nn.Module):
 
         self.criterion = nn.MSELoss()
 
-    def forward(self, input_tensor, target_tensor, constraints, teacher_forcing_ratio=0.0):
+    def forward(self, input_tensor, target_tensor, teacher_forcing_ratio=0.0):
+        constraints = self._get_constraints()
         loss = 0.
         preds = []
         for ei in range(self.pre_seq_length - 1):
