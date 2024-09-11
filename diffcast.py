@@ -895,25 +895,25 @@ class GaussianDiffusion(nn.Module):
         return ret
 
     @torch.no_grad()
-    def sample(self, frames_in, T_out, return_all_timesteps = False):
-        B, T_in, c, h, w = frames_in.shape
+    def sample(self, input_tensor, T_out, return_all_timesteps = False):
+        B, T_in, c, h, w = input_tensor.shape
         device = self.device
-        backbone_output, _ = self.backbone_net.predict(frames_in)
+        backbone_output, _ = self.backbone_net.predict(input_tensor)
         
-        frames_in = self.normalize(frames_in)
+        input_tensor = self.normalize(input_tensor)
         backbone_output = self.normalize(backbone_output)
         
-        global_ctx, local_ctx = self.ctx_net.scan_ctx(torch.cat((frames_in, backbone_output), dim=1))
+        global_ctx, local_ctx = self.ctx_net.scan_ctx(torch.cat((input_tensor, backbone_output), dim=1))
         
-        # frames_in = rearrange(frames_in, 'b t c h w -> b (t c) h w')
+        # input_tensor = rearrange(input_tensor, 'b t c h w -> b (t c) h w')
         sample_fn = self.p_sample_loop if not self.is_ddim_sampling else self.ddim_sample
         
         frames_pred = []
         ys = []
         
-        pre_frag = frames_in
+        pre_frag = input_tensor
         pre_mu = None
-        for frag_idx in tqdm(range(T_out // T_in), desc="sampling frags:", disable=(frames_in.device == 0)):
+        for frag_idx in tqdm(range(T_out // T_in), desc="sampling frags:", disable=(input_tensor.device == 0)):
             
             mu = backbone_output[:, frag_idx * T_in : (frag_idx + 1) * T_in]
 
@@ -949,9 +949,9 @@ class GaussianDiffusion(nn.Module):
         return frames_pred, backbone_output, ys
     
 
-    def predict(self, frames_in,  compute_loss=False, frames_gt=None, **kwargs):
+    def forward(self, input_tensor, target_tensor, compute_loss=True, **kwargs):
         T_out = default(kwargs.get('T_out'), 20)
-        #pred, mu, y = self.sample(frames_in=frames_in, T_out=T_out)
+        #pred, mu, y = self.sample(input_tensor=input_tensor, T_out=T_out)
         if compute_loss:
             B, T_in, c, h, w = frames_in.shape
             T_out = frames_gt.shape[1]
@@ -966,7 +966,7 @@ class GaussianDiffusion(nn.Module):
             residual = frames_gt - backbone_output
             global_ctx, local_ctx = self.ctx_net.scan_ctx(torch.cat((frames_in, backbone_output), dim=1))
 
-            pre_frag = frames_in
+            pre_frag = input_tensor
             pre_mu = None
             pred_ress = []
             diff_loss = 0.
@@ -980,15 +980,15 @@ class GaussianDiffusion(nn.Module):
                                                         idx=torch.full((B,), frag_idx, device=device, dtype=torch.long))
                 diff_loss += noise_loss
 
-                pre_frag = frames_gt[:, frag_idx * T_in : (frag_idx + 1) * T_in]
+                pre_frag = target_tensor[:, frag_idx * T_in : (frag_idx + 1) * T_in]
                 pre_mu = mu
             diff_loss /= (T_out // T_in)
 
-            alpha = torch.tensor(0.5)
-            loss = (1 - alpha) * backbone_loss + alpha * diff_loss
-            return loss, backbone_loss, diff_loss
+            #alpha = torch.tensor(0.5)
+            
+            return diff_loss, diff_loss
         else:
-            pred, mu, y = self.sample(frames_in=frames_in, T_out=T_out)
+            pred, mu, y = self.sample(input_tensor=input_tensor, T_out=T_out)
             loss = None
             backbone_loss = None
             diff_loss = None

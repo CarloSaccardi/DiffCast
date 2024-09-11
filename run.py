@@ -33,12 +33,13 @@ def create_parser():
     # --------------- Basic ---------------
     parser = argparse.ArgumentParser()
     
-    parser.add_argument('--backbone', default='phydnet',  type=str,              help='backbone model for deterministic prediction')
-    parser.add_argument('--use_diff', action="store_true", default=False,        help='Weather use diff framework, as for ablation study')
+    parser.add_argument('--backbone',       type=str,   default='phydnet',           help='backbone model for deterministic prediction')
+    parser.add_argument('--stochastic',     type=str,   default='diffusion',           help='diffusion model for stochastic prediction')
+    parser.add_argument('--use_diff',       action="store_true", default=False,        help='Weather use diff framework, as for ablation study')
     
     parser.add_argument("--seed",           type=int,   default=0,              help='Experiment seed')
     parser.add_argument("--exp_dir",        type=str,   default='basic_exps',   help="experiment directory")
-    parser.add_argument("--exp_note",       type=str,   default=None,           help="additional note for experiment")
+    parser.add_argument("--exp_note",       type=str,   default="phydnet",           help="additional note for experiment")
 
     parser.add_argument("--debug",          type=bool,  default=False,           help="load a small dataset for debugging")
     parser.add_argument("--profiler",       type=bool,  default=False,           help="use profiler to check the code")
@@ -69,11 +70,16 @@ def create_parser():
     parser.add_argument("--epochs",         type=int,   default=20,              help="number of epochs")
     parser.add_argument("--training_steps", type=int,   default=200000,          help="number of training steps")
     parser.add_argument("--early_stop",     type=int,   default=10,              help="early stopping steps")
-    parser.add_argument("--ckpt_milestone", type=str,   default=None,            help="resumed checkpoint milestone")
+    parser.add_argument("--ckpt_milestone", type=str,   default="Exps/basic_exps/Singlephydnet/sevir/2024-09-10_13-07-49_None/checkpoints/ckpt-49621.pt",            help="resumed checkpoint milestone")
     
     # --------------- Additional Ablation Configs ---------------
     parser.add_argument("--eval",           action="store_true",                 help="evaluation mode")
+    parser.add_argument("--testing",        type=bool,  default=False,              help="testing saved model")
+    parser.add_argument("--traininig",      type=bool,  default=True,                 help="training model")
+    
     parser.add_argument("--wandb_state",    type=str,   default='disabled',      help="wandb state config")
+    parser.add_argument("--config",         type=str,   default=None,            help="config file path")
+    parser.add_argument("--buidl_dirs",     type=bool,  default=True,            help="build dirs for experiment")
 
     args = parser.parse_args()
     return args
@@ -84,10 +90,22 @@ class Runner(object):
     def __init__(self, args):
         
         self.args = args
+        
+        # overwrite args with config file if exists
+        if self.args.config is not None:
+            with open(str(self.args.config), "r") as f:
+                config = yaml.safe_load(f)
+            self.update_args(self.args, config)
+            
+        set_seed(self.args.seed)
+        
+        self._preparation()
+        
+        if self.args.buidl_dirs:
+            self._build_dirs()
+        
         if self.args.debug:
             self.args.batch_size = 1
-            
-        self._preparation()
         
         # Config DDP kwargs from accelerate
         project_config = ProjectConfiguration(
@@ -144,9 +162,6 @@ class Runner(object):
             # print_log(show_img_info(sample), self.is_main)
             
         print_log(f"gpu_nums: {torch.cuda.device_count()}, gpu_id: {torch.cuda.current_device()}")
-        
-        if self.args.ckpt_milestone is not None:
-            self.load(self.args.ckpt_milestone)
 
     @property
     def is_main(self):
@@ -156,6 +171,10 @@ class Runner(object):
     def device(self):
         return self.accelerator.device
     
+    def update_args(self, args, config_dict):
+        for key, val in config_dict.items():
+            setattr(args, key, val) 
+    
     def _preparation(self):
         # =================================
         # Build Exp dirs and logging file
@@ -163,17 +182,33 @@ class Runner(object):
 
         set_seed(self.args.seed)
         self.model_name = self.model_name = ('Diff' if self.args.use_diff else 'Single') + self.args.backbone
-        self.date_time  = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
-        self.exp_name   = f"{self.date_time}_{self.args.exp_note}"
         
-        cur_dir         = os.path.dirname(os.path.abspath(__file__))
+        if not self.args.testing:
+
+            self.date_time  = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
+            self.exp_name   = f"{self.date_time}_{self.args.exp_note}"
+            
+            cur_dir         = os.path.dirname(os.path.abspath(__file__))
+            
+            self.exp_dir    = osp.join(cur_dir, 'Exps', self.args.exp_dir, self.model_name, self.args.dataset, self.exp_name)        
+            self.ckpt_path  = osp.join(self.exp_dir, 'checkpoints')
+            self.valid_path = osp.join(self.exp_dir, 'valid_samples')
+            self.test_path  = osp.join(self.exp_dir, 'test_samples')
+            self.log_path   = osp.join(self.exp_dir, 'logs')
+            self.sanity_path = osp.join(self.exp_dir, 'sanity_check')
+            
+        else:
+            assert self.args.ckpt_milestone is not None, "Please provide a milestone for testing"
+            #Exps/basic_exps/Singlephydnet/sevir/2024-09-10_13-07-49_None/checkpoints/ckpt-49621.pt
+            self.exp_dir = '/'.join(self.args.ckpt_milestone.split('/')[:-2])
+            self.ckpt_path = osp.join(self.exp_dir, 'checkpoints')
+            self.valid_path = osp.join(self.exp_dir, 'valid_samples')
+            self.test_path = osp.join(self.exp_dir, 'test_samples')
+            self.log_path = osp.join(self.exp_dir, 'logs')
+            self.sanity_path = osp.join(self.exp_dir, 'sanity_check')
+            
         
-        self.exp_dir    = osp.join(cur_dir, 'Exps', self.args.exp_dir, self.model_name, self.args.dataset, self.exp_name)        
-        self.ckpt_path  = osp.join(self.exp_dir, 'checkpoints')
-        self.valid_path = osp.join(self.exp_dir, 'valid_samples')
-        self.test_path  = osp.join(self.exp_dir, 'test_samples')
-        self.log_path   = osp.join(self.exp_dir, 'logs')
-        self.sanity_path = osp.join(self.exp_dir, 'sanity_check')
+    def _build_dirs(self):
         os.makedirs(self.exp_dir, exist_ok=True)
         os.makedirs(self.ckpt_path, exist_ok=True)
         os.makedirs(self.valid_path, exist_ok=True)
@@ -449,86 +484,7 @@ class Runner(object):
                 # do santy check at begining
                 if self.cur_step == 1:
                     """ santy check """
-                    if not osp.exists(self.sanity_path):
-                        try:
-                            print_log(f" ========= Running Sanity Check ==========", self.is_main)
-                            radar_ori, radar_recon= self._sample_batch(batch)
-                            os.makedirs(self.sanity_path)
-                            if self.is_main:
-                                for i in range(radar_ori.shape[0]):
-                                    self.visiual_save_fn(radar_recon[i], radar_ori[i], osp.join(self.sanity_path, f"{i}/vil"),data_type='vil')
-
-                        except Exception as e:
-                            print_log(e, self.is_main)
-                            print_log("Sanity Check Failed", self.is_main)
-
-            # save checkpoint and do test every epoch
-            self.save()
-            print_log(f" ========= Finisth one Epoch ==========", self.is_main)
-
-        self.accelerator.end_training()
-        
-        
-        
-    
-    def train(self):
-        # set global step as traing process
-        pbar = tqdm(
-            initial=self.cur_step,
-            total=self.global_steps,
-            disable=not self.is_main,
-        )
-        start_epoch = self.cur_epoch
-
-        for epoch in range(start_epoch, self.global_epochs):
-            self.cur_epoch = epoch
-            self.model.train()
-            
-            for i, batch in enumerate(self.train_loader):
-                # train the model with mixed_precision
-                with self.accelerator.autocast(self.model):
-
-                    loss_dict = self._train_batch(batch)
-                    self.accelerator.backward(loss_dict['total_loss'])
                     
-                    if self.cur_step == 0:
-                        # training process check
-                        for name, param in self.model.named_parameters():
-                            if param.grad is None:
-                                print_log(name, self.is_main)   
-    
-                self.accelerator.wait_for_everyone()
-                if self.accelerator.sync_gradients:
-                    self.accelerator.clip_grad_norm_(self.model.parameters(), 1.0)
-                
-                self.optimizer.step()
-                self.optimizer.zero_grad()
-                
-                if not self.accelerator.optimizer_step_was_skipped:
-                    self.scheduler.step()
-                
-                # record train info
-                lr = self.optimizer.param_groups[0]['lr']
-                log_dict = dict()
-                log_dict['lr'] = lr
-                for k,v in loss_dict.items():
-                    log_dict[k] = v.item()
-                self.accelerator.log(log_dict, step=self.cur_step)
-                pbar.set_postfix(**log_dict)   
-                state_str = f"Epoch {self.cur_epoch}/{self.global_epochs}, Step {i}/{self.steps_per_epoch}"
-                pbar.set_description(state_str)
-                
-                # update ema param and log file every 20 steps
-                if i % 20 == 0:
-                    logging.info(state_str+'::'+str(log_dict))
-                self.ema.update()
-
-                self.cur_step += 1
-                pbar.update(1)
-                
-                # do santy check at begining
-                if self.cur_step == 1:
-                    """ santy check """
                     if not osp.exists(self.sanity_path):
                         try:
                             print_log(f" ========= Running Sanity Check ==========", self.is_main)
@@ -537,16 +493,19 @@ class Runner(object):
                             if self.is_main:
                                 for i in range(radar_ori.shape[0]):
                                     self.visiual_save_fn(radar_recon[i], radar_ori[i], osp.join(self.sanity_path, f"{i}/vil"),data_type='vil')
+                                    
+                            break
 
                         except Exception as e:
                             print_log(e, self.is_main)
                             print_log("Sanity Check Failed", self.is_main)
-
+                
             # save checkpoint and do test every epoch
             self.save()
             print_log(f" ========= Finisth one Epoch ==========", self.is_main)
 
         self.accelerator.end_training()
+        
 
         
     def _get_seq_data(self, batch):
@@ -564,12 +523,12 @@ class Runner(object):
         
     
     @torch.no_grad()
-    def _sample_batch(self, batch, use_ema=False):
-        sample_fn = self.ema.ema_model.predict if use_ema else self.model
+    def _sample_batch(self, batch):
+        
         frame_in = self.args.frames_in
         radar_batch = self._get_seq_data(batch)
         radar_input, radar_gt = radar_batch[:,:frame_in], radar_batch[:,frame_in:]
-        radar_pred, _ = sample_fn(radar_input,compute_loss=False)
+        radar_pred = self.model.inference(radar_input) if self.accelerator.num_processes ==1 else self.model.module.inference(radar_input)
         
         radar_gt = self.accelerator.gather(radar_gt).detach().cpu().numpy()
         radar_pred = self.accelerator.gather(radar_pred).detach().cpu().numpy()
@@ -586,6 +545,7 @@ class Runner(object):
         cnt = 0
         save_dir = osp.join(self.test_path, f"sample-{milestone}") if do_test else osp.join(self.valid_path, f"sample-{milestone}")
         os.makedirs(save_dir, exist_ok=True)
+        print("#####################", self.is_main)
         if self.is_main:
             eval = Evaluator(
                 seq_len=self.args.frames_out,
@@ -620,11 +580,12 @@ class Runner(object):
         milestones = sorted([int(m.split('-')[-1].split('.')[0]) for m in mils_paths], reverse=True)
         print_log(f"milestones: {milestones}", self.accelerator.is_main_process)
         
+        """
         if target_ckpt is not None:
             self.load(target_ckpt)
             saved_dir_name = target_ckpt.split('/')[-1].split('.')[0]
             self.test_samples(saved_dir_name, do_test=True)
-            return
+        """
         
         for m in range(0, len(milestones), 1):
             self.load(milestones[m])
@@ -633,11 +594,12 @@ class Runner(object):
 def main():
     args = create_parser()
     exp = Runner(args)
-    if not args.eval:
+    if args.traininig:
         exp.train_backbone()
         #exp.train()
-
-    exp.check_milestones(target_ckpt=args.ckpt_milestone)
+    if args.testing:
+        assert args.buidl_dirs == False, "Save test samples in same directories of training"
+        exp.check_milestones(target_ckpt=args.ckpt_milestone)
     
 
 if __name__ == '__main__':
